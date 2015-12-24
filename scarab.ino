@@ -1,6 +1,6 @@
 /*
 
-  ARDUINO based hexbug Scarab v 1.7.0
+  ARDUINO based hexbug Scarab v 1.8.0
   
   Arduino based hexbug spider Scarab is a robotic mechanical toy.
   
@@ -37,6 +37,8 @@ Change log:
   3. 2015-05-05 - v1.5.0 switched to DiretIO library
   4. 2015-05-19 - v1.6.0 compiled against latest TaskScheduler library with IDLE sleep support. Laser indicated ultrasonic ping activity
   5. 2015-05-22 - v1.7.0 use of micros for gyro with possibly more accurate tracking
+  6. 2015-12-04 - v1.7.1 updated gyro calibration routine
+  7. 2015-12-23 - v1.8.0 gyro and accel tasks are running with elevated priority (TaskScheduler 2.0.0)
 */
 
 #include <DirectIO.h>
@@ -44,6 +46,7 @@ Change log:
 
 #define _TASK_SLEEP_ON_IDLE_RUN
 #define _TASK_TIMECRITICAL
+#define _TASK_PRIORITY
 #include <TaskScheduler.h>
 
 #include <avr/sleep.h>
@@ -64,10 +67,6 @@ Change log:
  */
 
 //#define _DEBUG_
-
-#define MINUTE 60000L
-#define SECOND 1000L
-#define PARAMADDR 0
 
 #define TRIGGERPIN 11
 #define ECHOPIN 10
@@ -100,7 +99,7 @@ AnalogOutput<M2PIN2>  pM2Pin2;
 
 Output<13>            pLED;
   
-const char CToken[10] = "SCARAB14"; // Eeprom token: Spider
+//const char CToken[10] = "SCARAB14"; // Eeprom token: Spider
 
 int state;
 boolean error;
@@ -108,7 +107,7 @@ boolean error;
 #define PING_OBSTACLE	  1000 //  ~20 cm; distance = delay/58.2
 #define PING_PERIOD	  200  // 5 times per second
 #define GYRO_PERIOD       10  // potentially 1 kHz if the board can handle it
-#define ACCEL_PERIOD      200  // 5 times per second
+#define ACCEL_PERIOD      100  // 5 times per second
 #define MOVE_PERIOD       50 // 20 times per second
 #define MOVECHK_PERIOD    500 // 2 times per second
 #define SLOW_BLINK        500  // half second
@@ -135,8 +134,8 @@ boolean error;
 //#define  AC_LSB_10        164
 
 // average R (ax^2+ay^2+az^2) = 310,000,000, std deviation = ~28,000,000
-#define G2_R_AVERAGE  281597344L
-#define G2_STD_DEV     2542921L
+#define G2_R_AVERAGE  287584352L
+#define G2_STD_DEV     2579226L
 #define G2_2STD_DEV    (G2_STD_DEV+G2_STD_DEV)
 #define G2_3STD_DEV    (G2_STD_DEV*3)
 #define G2_THRESHOLD_HIGH  G2_R_AVERAGE+G2_2STD_DEV  // g^2 in a very stable state (need to calculate) representing "stable" state (no movements)
@@ -153,6 +152,10 @@ void errorCallback();
 void moveDanceScientificInit();
 
 // Tasks
+// gyroManager is a higher priority scheduler
+// taskManager is a base scheduler
+Scheduler taskManager, gyroManager;
+
 Task tDistance (PING_PERIOD, TASK_FOREVER, &mPingCallback );
 Task tGyro (GYRO_PERIOD, CALIBRATE_CYCLES, &gyroCalibrate );
 Task tAccel (ACCEL_PERIOD, TASK_FOREVER, &accelCallback);
@@ -161,14 +164,12 @@ Task tMoveCheck (MOVECHK_PERIOD, TASK_FOREVER, &moveCheckCallback);
 Task tBlinkRed (FAST_BLINK, TASK_FOREVER, &blinkRedOn );
 Task tBlinkYellow (SLOW_BLINK, TASK_FOREVER, &blinkYellowOn );
 Task tBlinkGreen (SLOW_BLINK, TASK_FOREVER, &blinkGreenOn );
-Task tError (1000, TASK_FOREVER, &errorCallback);
+Task tError (TASK_SECOND, TASK_FOREVER, &errorCallback);
 
 #ifdef _DEBUG_
 void displayCallback();
 Task tDisplay (SECOND, TASK_FOREVER, &displayCallback );
 #endif
-
-Scheduler taskManager;
 
 MPU6050 accelgyro;
 
@@ -889,7 +890,7 @@ void laserOff () {
 
 #ifdef _TASK_TIMECRITICAL
 void checkOverrun() {
-  pLED = taskManager.isOverrun()  ? HIGH: LOW;
+  pLED = Scheduler::currentScheduler().isOverrun()  ? HIGH: LOW;
 }
 #endif
 
@@ -930,10 +931,11 @@ void setup () {
   power_usart0_disable();
 #endif
 
-  taskManager.init();
+//  taskManager.init();
 
-  taskManager.addTask(tGyro);
-  taskManager.addTask(tAccel);
+  gyroManager.addTask(tGyro);
+  gyroManager.addTask(tAccel);
+  
   taskManager.addTask(tDistance);
   taskManager.addTask(tMove);
   taskManager.addTask(tMoveCheck);
@@ -942,14 +944,14 @@ void setup () {
   taskManager.addTask(tBlinkGreen);
   taskManager.addTask(tError);
   
+  taskManager.setHighPriorityScheduler(&gyroManager);
+  
 //  taskManager.allowSleep(false);
 #ifdef _DEBUG_  
   taskManager.addTask(tDisplay);
 #endif
 
   shakeSettleSeconds = 3;  // Wait for at least three seconds for the robot to be motionless
-  tAccel.enable();
-  tGyro.enable();
 
   delay(2000);
 
@@ -957,6 +959,9 @@ void setup () {
   ledYellowOff();
   ledGreenOff();
   laserOff();
+
+  tAccel.enable();
+  tGyro.enable();
 
   obstacle = false;
 }
