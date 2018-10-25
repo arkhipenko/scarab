@@ -1,51 +1,51 @@
 /*
 
-  ARDUINO based hexbug Scarab v 1.8.0
-  
+  ARDUINO based hexbug Scarab v 1.8.1
+
   Arduino based hexbug spider Scarab is a robotic mechanical toy.
-  
+
   Scarab is equipped with:
   1. Ultrasonic distance sensor
   2. IR obstacle sensor
   3. 3 axis Gyro
   4. 3 axis Accelerometer
   5. Laser pointer
-  
+
   Scarab can:
   1. Move forward and maintain direction (which is set when turned on)
   2. Detect obstacles
   3. Attempt to go around obstacles, ultimately in the direction set at #1
-  
+
   When scarab detects an obstacle, it performs a "dance".
-  A dance is a number of movements and actions scarab performs to help him decide how to go around the obstacle. 
+  A dance is a number of movements and actions scarab performs to help him decide how to go around the obstacle.
   Some of the dance moves are just for fun and showoff.
   Currently scarab performs 3 separate dances, which he chooses randomly in front of every obstacle:
   1. Randomly turn right or left by 90 degrees and walk in that direction for 5 seconds. Then attempt to move towards original direction
   2. Stop and measure distance to the obstacle a little to the right and a little to the left. Try go around the obstacle in the direction of further measurement.
-  3. Back off a little, then execute dance #1 (random) - this is just a little more than #1 dance. 
-  4. Back off a litle, then #2 but measured at 90 degrees to the original direction, preferring one direction. 
+  3. Back off a little, then execute dance #1 (random) - this is just a little more than #1 dance.
+  4. Back off a litle, then #2 but measured at 90 degrees to the original direction, preferring one direction.
 
-  When scarab is turned on, it needs to calibrate the gyro. It has to be absolutely still and on a horizontal surface. 
-  When scarab is calibrating gyro, a yellow light is blinking. If scarab is moved or shaken durinnng calibration, a red light starts blinking, 
-  and the calibration process restarts. 
-  If scarab is turned upside down, it stops and re-starts the calibration process. This also resets the direction scarab is trying to maintain. 
-  If Scarab cannot move, either because of some obstacle or low batteries, all three lights will blink with a slight relative delay (running lights). 
+  When scarab is turned on, it needs to calibrate the gyro. It has to be absolutely still and on a horizontal surface.
+  When scarab is calibrating gyro, a yellow light is blinking. If scarab is moved or shaken durinnng calibration, a red light starts blinking,
+  and the calibration process restarts.
+  If scarab is turned upside down, it stops and re-starts the calibration process. This also resets the direction scarab is trying to maintain.
+  If Scarab cannot move, either because of some obstacle or low batteries, all three lights will blink with a slight relative delay (running lights).
 
-Change log:
+  Change log:
   1. 2015-03-03 - added average filters for accelerometer values
-  2. 2015-03-25 - added another dance and a "directional preoclivity" to make sure scarab goes in one direction. 
+  2. 2015-03-25 - added another dance and a "directional preoclivity" to make sure scarab goes in one direction.
   3. 2015-05-05 - v1.5.0 switched to DiretIO library
   4. 2015-05-19 - v1.6.0 compiled against latest TaskScheduler library with IDLE sleep support. Laser indicated ultrasonic ping activity
   5. 2015-05-22 - v1.7.0 use of micros for gyro with possibly more accurate tracking
   6. 2015-12-04 - v1.7.1 updated gyro calibration routine
   7. 2015-12-23 - v1.8.0 gyro and accel tasks are running with elevated priority (TaskScheduler 2.0.0)
-*/
-
+  8. 2018-10-25 - v1.8.1 dynamic accelerometer calibration 	
+*/ 
 #include <DirectIO.h>
 #include <AvgFilter.h>
 
 #define _TASK_SLEEP_ON_IDLE_RUN
-#define _TASK_TIMECRITICAL
+//#define _TASK_TIMECRITICAL
 #define _TASK_PRIORITY
 #include <TaskScheduler.h>
 
@@ -58,15 +58,15 @@ Change log:
 #include <MPU6050.h>
 
 /*
- * HMC5883L Connection.
- * Arduino UNO or compatible
- *  Arduino GND -> GY271/HMC5883L GND
- *  Arduino 3.3V -> GY271/HMC5883L VCC
- *  Arduino A4 (SDA) -> GY271/HMC5883L SDA
- *  Arduino A5 (SCL) -> GY271/HMC5883L SCL
- */
+   HMC5883L Connection.
+   Arduino UNO or compatible
+    Arduino GND -> GY271/HMC5883L GND
+    Arduino 3.3V -> GY271/HMC5883L VCC
+    Arduino A4 (SDA) -> GY271/HMC5883L SDA
+    Arduino A5 (SCL) -> GY271/HMC5883L SCL
+*/
 
-//#define _DEBUG_
+//#define _DEBUG_y
 
 #define TRIGGERPIN 11
 #define ECHOPIN 10
@@ -85,7 +85,7 @@ Change log:
 // PINs for DirectIO
 
 Output<TRIGGERPIN>    pTrigger;
-Input<ECHOPIN>        pEcho; 
+Input<ECHOPIN>        pEcho;
 Input<IRPIN>          pIrPin;
 Output<GREENLEDPIN>   pGreenLedPin;
 Output<YELLOWLEDPIN>  pYellowLedPin;
@@ -98,25 +98,26 @@ AnalogOutput<M2PIN1>  pM2Pin1;
 AnalogOutput<M2PIN2>  pM2Pin2;
 
 Output<13>            pLED;
-  
+
 //const char CToken[10] = "SCARAB14"; // Eeprom token: Spider
 
 int state;
 boolean error;
 
-#define PING_OBSTACLE	  1000 //  ~20 cm; distance = delay/58.2
-#define PING_PERIOD	  200  // 5 times per second
-#define GYRO_PERIOD       10  // potentially 1 kHz if the board can handle it
+#define PING_OBSTACLE	    1000 //  ~15 cm; distance = delay/58.2
+#define PING_PERIOD	      200  // 5 times per second
+#define GYRO_PERIOD       20  // potentially 1 kHz if the board can handle it
 #define ACCEL_PERIOD      100  // 5 times per second
 #define MOVE_PERIOD       50 // 20 times per second
 #define MOVECHK_PERIOD    500 // 2 times per second
 #define SLOW_BLINK        500  // half second
-#define FAST_BLINK        250  // 4 times per second
-#define SUPERFAST_BLINK   100  // 10 times per second
+#define FAST_BLINK        150  // 4 times per second
+#define SUPERFAST_BLINK   100  // 10 times per second 
 #define LASER_STROBE      50  // was 100
 #define LASER_STROBES     10
 
 #define CALIBRATE_CYCLES  (5000/GYRO_PERIOD)
+#define ACCEL_CALIB       200
 #define AVG_PRIMRE_CYCLES 100
 #define MOVE_MAXSPEED     255 //255
 //#define MOVE_MINSPEED     140 //180
@@ -132,19 +133,30 @@ boolean error;
 //#define  AC_LSB_10        655
 //#define  AC_LSB_10        328
 //#define  AC_LSB_10        164
+//
+//#define G2_R_AVERAGE  279218496L
+//#define G2_STD_DEV     2,962,379L
+//#define G2_2STD_DEV    (G2_STD_DEV+G2_STD_DEV)
+//#define G2_3STD_DEV    (G2_STD_DEV*3)
 
-// average R (ax^2+ay^2+az^2) = 310,000,000, std deviation = ~28,000,000
-#define G2_R_AVERAGE  287584352L
-#define G2_STD_DEV     2579226L
-#define G2_2STD_DEV    (G2_STD_DEV+G2_STD_DEV)
-#define G2_3STD_DEV    (G2_STD_DEV*3)
-#define G2_THRESHOLD_HIGH  G2_R_AVERAGE+G2_2STD_DEV  // g^2 in a very stable state (need to calculate) representing "stable" state (no movements)
-#define G2_THRESHOLD_LOW   G2_R_AVERAGE-G2_2STD_DEV  // g^2 in a very stable state (need to calculate) representing "stable" state (no movements)
+long G2_R_AVERAGE = 268435456L;
+long G2_STD_DEV = G2_R_AVERAGE / 20L;
+long G2_2STD_DEV  =  (G2_STD_DEV + G2_STD_DEV);
+long G2_3STD_DEV  =  (G2_STD_DEV * 3);
 
-// Callback methods prototypes 
+long G2_THRESHOLD_HIGH;  // G2_R_AVERAGE+G2_2STD_DEV  // g^2 in a very stable state (need to calculate) representing "stable" state (no movements)
+long G2_THRESHOLD_LOW;   // G2_R_AVERAGE-G2_2STD_DEV  // g^2 in a very stable state (need to calculate) representing "stable" state (no movements)
+
+//#define G2_THRESHOLD_HIGH  G2_R_AVERAGE+G2_2STD_DEV  // g^2 in a very stable state (need to calculate) representing "stable" state (no movements)
+//#define G2_THRESHOLD_LOW   G2_R_AVERAGE-G2_2STD_DEV  // g^2 in a very stable state (need to calculate) representing "stable" state (no movements)
+
+// Callback methods prototypes
 void mPingCallback();
 void gyroCalibrate();
 void accelCallback();
+void accelCalibrate();
+void accelCalibOD();
+bool accelCalibOE();
 void moveCallback();
 void moveCheckCallback();
 void blinkRedOn(); void blinkYellowOn(); void blinkGreenOn();
@@ -158,7 +170,8 @@ Scheduler taskManager, gyroManager;
 
 Task tDistance (PING_PERIOD, TASK_FOREVER, &mPingCallback );
 Task tGyro (GYRO_PERIOD, CALIBRATE_CYCLES, &gyroCalibrate );
-Task tAccel (ACCEL_PERIOD, TASK_FOREVER, &accelCallback);
+//Task tAccel (ACCEL_PERIOD, TASK_FOREVER, &accelCallback);
+Task tAccel (20, ACCEL_CALIB, &accelCalibrate, NULL, false, &accelCalibOE, &accelCalibOD);
 Task tMove (MOVE_PERIOD, TASK_FOREVER, &moveCallback );
 Task tMoveCheck (MOVECHK_PERIOD, TASK_FOREVER, &moveCheckCallback);
 Task tBlinkRed (FAST_BLINK, TASK_FOREVER, &blinkRedOn );
@@ -168,7 +181,7 @@ Task tError (TASK_SECOND, TASK_FOREVER, &errorCallback);
 
 #ifdef _DEBUG_
 void displayCallback();
-Task tDisplay (SECOND, TASK_FOREVER, &displayCallback );
+Task tDisplay (TASK_SECOND, TASK_FOREVER, &displayCallback );
 #endif
 
 MPU6050 accelgyro;
@@ -205,7 +218,7 @@ byte minSpeed, halfSpeed;
 int rightLegSpeed, leftLegSpeed;
 
 void moveStop() {
-  rightLegSpeed = leftLegSpeed =0;
+  rightLegSpeed = leftLegSpeed = 0;
   pM1Pin1 = 0;
   pM1Pin2 = 0;
   pM2Pin1 = 0;
@@ -280,8 +293,8 @@ boolean  obstacle;
 
 
 void mPingCallback() {
-  unsigned long d; 
-  
+  unsigned long d;
+
   laserOn();
 
   pTrigger = LOW;
@@ -289,19 +302,27 @@ void mPingCallback() {
   pTrigger = HIGH;
   delayMicroseconds(10);
   pTrigger = LOW;
-  d = pulseIn(ECHOPIN, HIGH, PING_OBSTACLE<<1);
-  
+  d = pulseIn(ECHOPIN, HIGH, PING_OBSTACLE << 1);
+
   laserOff();
 
-  pingDistance = mPingFilter.value((d ? d : PING_OBSTACLE<<1));
+  pingDistance = mPingFilter.value((d ? d : PING_OBSTACLE << 1));
   obstacle = (pingDistance <= PING_OBSTACLE) || (!pIrPin);
-  if (obstacle) tDistance.delay(10);
+  //  obstacle = (pingDistance <= PING_OBSTACLE); // || (!pIrPin);
+  //  obstacle = (!pIrPin);
+  if (obstacle) {
+    tDistance.delay(10);
+    pLED = HIGH;
+  }
+  else {
+    pLED = LOW;
+  }
 }
 
 
 long longRangePing(unsigned long aTimeout) {
-  unsigned long d; 
-  
+  unsigned long d;
+
   laserOn();
 
   pTrigger = LOW;
@@ -310,7 +331,7 @@ long longRangePing(unsigned long aTimeout) {
   delayMicroseconds(10);
   pTrigger = LOW;
   d = pulseIn(ECHOPIN, HIGH, aTimeout);
-  
+
   laserOff();
 
   return (d ? d : aTimeout);
@@ -334,7 +355,7 @@ void gyroCalibrate() {
 
   // Only calibrate if spider is standing still and not upside down.
   if (movingShaking || upsideDown) {
-    if (!tBlinkRed.isEnabled()) tBlinkRed.enable();
+    tBlinkRed.enableIfNot();
     tGyro.setIterations(CALIBRATE_CYCLES);
     tGyro.enable();
     return;
@@ -357,15 +378,15 @@ void gyroCalibrate() {
       errorCondition();
       return;
     }
-    
+
     accelgyro.setFullScaleGyroRange(GYRO_MODE);
     accelgyro.setDMPEnabled(false);
     accelgyro.setStandbyYGyroEnabled(true);
     accelgyro.setStandbyXGyroEnabled(true);
     accelgyro.setTempSensorEnabled(false);
-    
-    
-    curr_t = micros(); 
+
+
+    curr_t = micros();
     gz = 0;
     currentAngle = 0;
     mGyroFilter.initialize();
@@ -375,12 +396,12 @@ void gyroCalibrate() {
   if (!tGyro.isLastIteration()) {
     stat.add((float) accelgyro.getRotationZ());
 #ifdef _DEBUG_
-//Serial.print("tGyro iteration = "); Serial.println(tGyro.getIterations());
+    //Serial.print("tGyro iteration = "); Serial.println(tGyro.getIterations());
 #endif
   }
   else {
 #ifdef _DEBUG_
-//    Serial.print("tGyro iteration = "); Serial.println(tGyro.getIterations());
+    //    Serial.print("tGyro iteration = "); Serial.println(tGyro.getIterations());
 #endif
     gz_bias = (long) stat.average();
     gz_zero_zone = (long) stat.pop_stdev() * 2;  // should we use 3 or 2 std dev?
@@ -405,7 +426,7 @@ void gyroCallbackPrime() {
     tGyro.setCallback(&gyroCallback);
     tGyro.setIterations(TASK_FOREVER);
     ultimateHeading = currentHeading = currentAngle;
-    ultimateHeadingStart = currentHeadingStart = millis();    
+    ultimateHeadingStart = currentHeadingStart = millis();
     minSpeed = MOVE_START;
     tMove.set (MOVECHK_PERIOD, TASK_FOREVER, &moveCalibrate );
     tMove.enable();
@@ -433,8 +454,8 @@ void gyroCallback() {
 #ifdef _DEBUG_
   //  Serial.print("gz="); Serial.print(gz); Serial.print(", prev_gz="); Serial.print(prev_gz); Serial.print(", t="); Serial.print(curr_t); Serial.print(", pt="); Serial.println(prev_t);
   //  Serial.print("gz+prev_gz=");Serial.print(gz+prev_gz); Serial.print(", t-pt="); Serial.print(curr_t-prev_t); Serial.print(", delta="); Serial.println(((long) (gz+prev_gz)*((long) (curr_t-prev_t))));
-//  if (tGyro.getOverrun() < 0) ledRedOn();
-//  else ledRedOff();
+  //  if (tGyro.getOverrun() < 0) ledRedOn();
+  //  else ledRedOff();
 #endif
   long delta_g = (gz + prev_gz) / 2L;  // rates are 250 deg/s, 500 deg/s, 1000 deg/s and 2000 deg/s
   long delta_t = curr_t - prev_t;
@@ -450,6 +471,53 @@ long laccX, laccY, laccZ;
 long faccXd[5], faccYd[5], faccZd[5];
 avgFilter faccX(5, faccXd), faccY(5, faccYd), faccZ(5, faccZd);
 int  shakeCounter = 0;
+
+void accelCalibrate() {
+  accelgyro.getAcceleration(&accX, &accY, &accZ);
+  long r = (long) accX * (long) accX + (long) accY * (long) accY + (long) accZ * (long) accZ;
+  stat.add(r);
+}
+
+bool accelCalibOE() {
+#ifdef _DEBUG_
+  Serial.println("In accelCalibOE");
+#endif
+  tBlinkRed.disable();
+  tBlinkGreen.disable();
+  tBlinkYellow.setInterval(FAST_BLINK);
+  tBlinkYellow.enable();
+  return true;
+}
+
+
+void accelCalibOD() {
+#ifdef _DEBUG_
+  Serial.println("In accelCalibOE");
+#endif
+  G2_R_AVERAGE = (long) stat.average();
+  G2_STD_DEV = (long) stat.pop_stdev();
+  G2_2STD_DEV = (G2_STD_DEV + G2_STD_DEV);
+  G2_3STD_DEV = (G2_STD_DEV * 5);
+  G2_THRESHOLD_HIGH = G2_R_AVERAGE + G2_3STD_DEV; // g^2 in a very stable state (need to calculate) representing "stable" state (no movements)
+  G2_THRESHOLD_LOW = G2_R_AVERAGE - G2_3STD_DEV; // g^2 in a very stable state (need to calculate) representing "stable" state (no movements)
+
+#ifdef _DEBUG_
+  Serial.print("Average r = "); Serial.println(G2_R_AVERAGE);
+  Serial.print("r std div = "); Serial.println(G2_STD_DEV);
+#endif
+
+  tBlinkYellow.setInterval(SLOW_BLINK);
+  tBlinkYellow.disable();
+  ledYellowOff();
+  tAccel.setInterval(ACCEL_PERIOD);
+  tAccel.setCallback(&accelCallback);
+  tAccel.setIterations(TASK_FOREVER);
+  tAccel.restart();
+  tGyro.enableDelayed(100);
+  tDistance.enable();
+
+}
+
 
 void accelCallback() {
   long g2;
@@ -476,12 +544,12 @@ void accelCallback() {
     else shakeCounter--;
   }
 #ifdef _DEBUG_
-    Serial.println("Accelerometer:");
-//    Serial.print("accZ = "); Serial.println(accZ);
-    Serial.print("g2 = "); Serial.println(g2);
-//    Serial.print("UpsideDown = "); Serial.println(upsideDown);
-Serial.print("movingShaking = "); Serial.println(movingShaking);
-//    Serial.print("shakeCounter = "); Serial.println(shakeCounter);
+//  Serial.println("Accelerometer:");
+  //    Serial.print("accZ = "); Serial.println(accZ);
+//  Serial.print("g2 = "); Serial.println(g2);
+  //    Serial.print("UpsideDown = "); Serial.println(upsideDown);
+  Serial.print("movingShaking = "); Serial.println(movingShaking);
+  //    Serial.print("shakeCounter = "); Serial.println(shakeCounter);
 #endif
 }
 
@@ -525,13 +593,13 @@ void errorCallback() {
 #ifdef _DEBUG_
 unsigned long counter = 0;
 void displayCallback() {
-//  if (counter++ % 40 == 0) {
-//    Serial.println("obstacle, distance, angle");
-//  }
-//  Serial.print(obstacle); Serial.print(",");
-//  Serial.print(pingDistance); Serial.print(",");
-//  Serial.print(currentAngle); Serial.print(",");
-//  Serial.println("");
+  //  if (counter++ % 40 == 0) {
+  //    Serial.println("obstacle, distance, angle");
+  //  }
+  //  Serial.print(obstacle); Serial.print(",");
+  //  Serial.print(pingDistance); Serial.print(",");
+  //  Serial.print(currentAngle); Serial.print(",");
+  //  Serial.println("");
 }
 #endif
 
@@ -552,10 +620,10 @@ void moveCallback() {
   int ls = MOVE_MAXSPEED, rs = MOVE_MAXSPEED;
 
 #ifdef _DEBUG_
-//  Serial.print("currentAngle = "); Serial.println(currentAngle);
-//  Serial.print("currentHeading = "); Serial.println(currentHeading);
-//  Serial.print("ultimateHeading = "); Serial.println(ultimateHeading);
-//  Serial.print("deltaAngle = "); Serial.println(deltaAngle);
+  //  Serial.print("currentAngle = "); Serial.println(currentAngle);
+  //  Serial.print("currentHeading = "); Serial.println(currentHeading);
+  //  Serial.print("ultimateHeading = "); Serial.println(ultimateHeading);
+  //  Serial.print("deltaAngle = "); Serial.println(deltaAngle);
 #endif
 
 #ifdef _TASK_TIMECRITICAL
@@ -580,8 +648,8 @@ void moveCallback() {
       else {
         if (deltaAngle >= MOVE_ROTATEANGLETOLERANCE) ls = halfSpeed;
         if (deltaAngle <= -MOVE_ROTATEANGLETOLERANCE) rs = halfSpeed;
-        if (deltaAngle >   MOVE_MINANGLEMOVEFWD>>1 ) ls = minSpeed;
-        if (deltaAngle < -(MOVE_MINANGLEMOVEFWD>>1)) rs = minSpeed;
+        if (deltaAngle >   MOVE_MINANGLEMOVEFWD >> 1 ) ls = minSpeed;
+        if (deltaAngle < -(MOVE_MINANGLEMOVEFWD >> 1)) rs = minSpeed;
         moveForward(ls, rs);
         tBlinkGreen.disable();
         ledGreenOn();
@@ -630,7 +698,7 @@ void moveCallback() {
 void moveCalibrate() {
 
   if (moveCheckUpsideDown()) return;
-  
+
   if (movingShaking) {
     ledYellowOff();
     ledGreenOn();
@@ -638,12 +706,12 @@ void moveCalibrate() {
     tBlinkGreen.disable();
     tDistance.enable();
     moveNow = MOVE_NORMAL;
-    halfSpeed = (byte) ((255 + (int) minSpeed)>>1);
+    halfSpeed = (byte) ((255 + (int) minSpeed) >> 1);
     tMove.set (MOVE_PERIOD, TASK_FOREVER, &moveCallback );
     tMoveCheck.enable();
     shakeSettleSeconds = 1;
   }
-  
+
   if (minSpeed <= 250) minSpeed += 5;
   else errorCondition();
 
@@ -667,27 +735,27 @@ boolean moveCheckUpsideDown() {
 }
 
 boolean moveCheckObstacle () {
-      if (obstacle) {
-        moveNow = MOVE_OBSTACLE;
-        tBlinkYellow.enable();
-        laserOn();
-      }
-      else {
-        tBlinkYellow.disable();
-        ledYellowOff();
-          laserOff();
-      }
-      return obstacle;
+  if (obstacle) {
+    moveNow = MOVE_OBSTACLE;
+    tBlinkYellow.enable();
+    laserOn();
+  }
+  else {
+    tBlinkYellow.disable();
+    ledYellowOff();
+    laserOff();
+  }
+  return obstacle;
 }
 
-#define SC_RESETPREFHEADINGAFTER  10000 // 10 seconds
+#define SC_RESETPREFHEADINGAFTER  1000 // 1 seconds
 #define SC_MOVEBACKTIME  1
 #define SC_ANGLETOLERANCE  500
 
 int  mdScCounter, preferredHeading = 0, attemptsCounter, attemptsMax = 4, measureCounter;
 long mdScDist[2];
 #define NUM_ANGLES 2 // 6
-int  angles[NUM_ANGLES+1] = {9000, -18000, 9000};
+int  angles[NUM_ANGLES + 1] = {9000, -18000, 9000};
 
 enum {
   SC_STOP,
@@ -698,7 +766,7 @@ enum {
 
 void moveDanceScientificInit() {
 #ifdef _DEBUG_
-//Serial.println("In moveDanceSwirlInit");
+  //Serial.println("In moveDanceSwirlInit");
 #endif
   mdScState = SC_STOP;
   tMove.setCallback(&moveDanceScientific);
@@ -716,22 +784,24 @@ void moveDanceScientificInit() {
 
 void moveDanceScientific() {
   /* This is a "dance" to determine direction of the obstacle avoidance
-   In this dance spider will:
-   1. Stop
-   2. If preferred direction of obstable avoidance is already set, turn 90 deg in that direction and continue
-       however, if enough attempts to move into that direction was made and it did not result into reaching ultimate direction and maintaining it for over 5 seconds, 
+    In this dance spider will:
+    1. Stop
+    2. If preferred direction of obstable avoidance is already set, turn 90 deg in that direction and continue
+       however, if enough attempts to move into that direction was made and it did not result into reaching ultimate direction and maintaining it for over 5 seconds,
        change the preferred direction to opposite, and increase number of attempts by 4, skip to step 8
-   3. To determine preferred direction: Turn right 90 deg
-   4. Measure distance to obstacle 3 times: straight ahead, + and - 5 degrees
-   5. Turn left 180 deg
-   6. Measure distance to obstacle 3 times: straight ahead, + and - 5 degrees
-   7. Set preferred direction to the one with higher avarage distance to obstacle, turn into that direction
-   8. Go back to normal move
+    3. To determine preferred direction: Turn right 90 deg
+    4. Measure distance to obstacle 3 times: straight ahead, + and - 5 degrees
+    5. Turn left 180 deg
+    6. Measure distance to obstacle 3 times: straight ahead, + and - 5 degrees
+    7. Set preferred direction to the one with higher avarage distance to obstacle, turn into that direction
+    8. Go back to normal move
   */
-  
+
 #ifdef _DEBUG_
-//Serial.println("In moveDanceScientific");
+  //Serial.println("In moveDanceScientific");
 #endif
+
+  preferredHeading = 0;
 
   long deltaAngle = currentAngle - currentHeading;  // Angle is accumulated in 100's of degrees
   if (moveCheckUpsideDown()) return;
@@ -744,15 +814,15 @@ void moveDanceScientific() {
       mdScCounter = SC_MOVEBACKTIME * 1000 / MOVE_PERIOD; // move back for 1 second
       mdScState = SC_MOVE_BACK;
       break;
-    
+
     case SC_MOVE_BACK:
       if (--mdScCounter) return;
       moveStop();
-      
-// If the preferred heading was not established yet, we should select it based on the extended ping      
+
+      // If the preferred heading was not established yet, we should select it based on the extended ping
       if (preferredHeading == 0) {
         addToCurrentHeading( angles[measureCounter] ); //turn right 90 deg
-        mdScState = SC_MEASURE;  
+        mdScState = SC_MEASURE;
       }
       else {
         if (attemptsCounter++ > attemptsMax) {
@@ -768,7 +838,7 @@ void moveDanceScientific() {
         tMoveCheck.enableDelayed();
       }
       break;
-  
+
     case SC_MEASURE:
       if (abs(deltaAngle) > SC_ANGLETOLERANCE) {
         int ls = (abs(deltaAngle) > MOVE_HEADING45DEG) ? halfSpeed : minSpeed;
@@ -782,21 +852,21 @@ void moveDanceScientific() {
       if (movingShaking) {
         return;
       }
-      mdScDist[(measureCounter<<1)/NUM_ANGLES] += longRangePing(250000); 
-      addToCurrentHeading(angles[++measureCounter]); 
+      mdScDist[(measureCounter << 1) / NUM_ANGLES] += longRangePing(250000);
+      addToCurrentHeading(angles[++measureCounter]);
       if (measureCounter < NUM_ANGLES)  break;
       mdScState = SC_DECIDE;
       break;
-    
+
     case SC_DECIDE:
       if (mdScDist[0] == mdScDist[1]) {
         preferredHeading = (random(0, 1000) < 500) ? (-MOVE_HEADING90DEG) : MOVE_HEADING90DEG;
       }
       if (mdScDist[0] > mdScDist[1]) {
-       preferredHeading = MOVE_HEADING90DEG;
+        preferredHeading = MOVE_HEADING90DEG;
       }
       else {
-       preferredHeading = -MOVE_HEADING90DEG;
+        preferredHeading = -MOVE_HEADING90DEG;
       }
       addToCurrentHeading(preferredHeading);
       attemptsCounter++;
@@ -810,21 +880,21 @@ void moveDanceScientific() {
 }
 
 void addToCurrentHeading(long aDelta) {
-   currentHeading += aDelta;
-   currentHeading %= MOVE_HEADING360DEG;
+  currentHeading += aDelta;
+  currentHeading %= MOVE_HEADING360DEG;
 }
 
 #define MCRETRIES  8
 int mcRetries = 0;
 
 void moveCheckCallback() {
-  if (rightLegSpeed==0 && leftLegSpeed==0) return;
+  if (rightLegSpeed == 0 && leftLegSpeed == 0) return;
   if (movingShaking) {
     mcRetries = 0;
     return;
   }
   if (++mcRetries >= MCRETRIES) {
-// We are not moving when we should - probably batteries - error    
+    // We are not moving when we should - probably batteries - error
     moveStop();
     laserOff();
     while (1) {
@@ -890,7 +960,7 @@ void laserOff () {
 
 #ifdef _TASK_TIMECRITICAL
 void checkOverrun() {
-  pLED = Scheduler::currentScheduler().isOverrun()  ? HIGH: LOW;
+  pLED = Scheduler::currentScheduler().isOverrun()  ? HIGH : LOW;
 }
 #endif
 
@@ -904,13 +974,13 @@ void initPins() {
 void setup () {
 
   initPins();
-  
+
   Wire.begin();       //Initiate the Wire library and join the I2C bus as a master
   randomSeed(analogRead(0));
-  
+
 #ifdef _DEBUG_
   Serial.begin(115200);
-  Serial.println(CToken);
+//  Serial.println(CToken);
 #endif
 
   moveStop();
@@ -919,9 +989,9 @@ void setup () {
   ledYellowOn();
   ledGreenOn();
   laserOn();
-  
+
 #ifdef _DEBUG_
-//  Serial.println("Init move functions");
+  //  Serial.println("Init move functions");
 #endif
 
   power_adc_disable();
@@ -931,11 +1001,11 @@ void setup () {
   power_usart0_disable();
 #endif
 
-//  taskManager.init();
+  //  taskManager.init();
 
   gyroManager.addTask(tGyro);
   gyroManager.addTask(tAccel);
-  
+
   taskManager.addTask(tDistance);
   taskManager.addTask(tMove);
   taskManager.addTask(tMoveCheck);
@@ -943,16 +1013,16 @@ void setup () {
   taskManager.addTask(tBlinkYellow);
   taskManager.addTask(tBlinkGreen);
   taskManager.addTask(tError);
-  
+
   taskManager.setHighPriorityScheduler(&gyroManager);
-  
-//  taskManager.allowSleep(false);
-#ifdef _DEBUG_  
+
+  //  taskManager.allowSleep(false);
+#ifdef _DEBUG_
   taskManager.addTask(tDisplay);
 #endif
 
   shakeSettleSeconds = 3;  // Wait for at least three seconds for the robot to be motionless
-
+  accelgyro.initialize();
   delay(2000);
 
   ledRedOff();
@@ -961,9 +1031,11 @@ void setup () {
   laserOff();
 
   tAccel.enable();
-  tGyro.enable();
+  //  tGyro.enable();
 
   obstacle = false;
+
+  //  tDistance.enable();
 }
 
 
@@ -971,6 +1043,3 @@ void loop ()
 {
   taskManager.execute();
 }
-
-
-
