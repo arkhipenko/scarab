@@ -39,8 +39,9 @@
   5. 2015-05-22 - v1.7.0 use of micros for gyro with possibly more accurate tracking
   6. 2015-12-04 - v1.7.1 updated gyro calibration routine
   7. 2015-12-23 - v1.8.0 gyro and accel tasks are running with elevated priority (TaskScheduler 2.0.0)
-  8. 2018-10-25 - v1.8.1 dynamic accelerometer calibration 	
-*/ 
+  8. 2018-10-25 - v1.8.1 dynamic accelerometer calibration
+  9. 2018-10-26 - v1.8.2 added custom calibrated offsets
+*/
 #include <DirectIO.h>
 #include <AvgFilter.h>
 
@@ -66,7 +67,7 @@
     Arduino A5 (SCL) -> GY271/HMC5883L SCL
 */
 
-//#define _DEBUG_y
+//#define _DEBUG_
 
 #define TRIGGERPIN 11
 #define ECHOPIN 10
@@ -373,17 +374,17 @@ void gyroCalibrate() {
     Serial.println("Calibrating gyro");
 #endif
     tBlinkYellow.enable();
-    accelgyro.initialize();
-    if (!accelgyro.testConnection()) {
-      errorCondition();
-      return;
-    }
+    //    accelgyro.initialize();
+    //    if (!accelgyro.testConnection()) {
+    //      errorCondition();
+    //      return;
+    //    }
 
-    accelgyro.setFullScaleGyroRange(GYRO_MODE);
-    accelgyro.setDMPEnabled(false);
-    accelgyro.setStandbyYGyroEnabled(true);
-    accelgyro.setStandbyXGyroEnabled(true);
-    accelgyro.setTempSensorEnabled(false);
+    //    accelgyro.setFullScaleGyroRange(GYRO_MODE);
+    //    accelgyro.setDMPEnabled(false);
+    //    accelgyro.setStandbyYGyroEnabled(true);
+    //    accelgyro.setStandbyXGyroEnabled(true);
+    //    accelgyro.setTempSensorEnabled(false);
 
 
     curr_t = micros();
@@ -492,7 +493,7 @@ bool accelCalibOE() {
 
 void accelCalibOD() {
 #ifdef _DEBUG_
-  Serial.println("In accelCalibOE");
+  Serial.println("In accelCalibOD");
 #endif
   G2_R_AVERAGE = (long) stat.average();
   G2_STD_DEV = (long) stat.pop_stdev();
@@ -506,13 +507,15 @@ void accelCalibOD() {
   Serial.print("r std div = "); Serial.println(G2_STD_DEV);
 #endif
 
-  tBlinkYellow.setInterval(SLOW_BLINK);
-  tBlinkYellow.disable();
-  ledYellowOff();
   tAccel.setInterval(ACCEL_PERIOD);
   tAccel.setCallback(&accelCallback);
   tAccel.setIterations(TASK_FOREVER);
   tAccel.restart();
+
+  tBlinkYellow.setInterval(SLOW_BLINK);
+  tBlinkYellow.disable();
+  ledYellowOff();
+
   tGyro.enableDelayed(100);
   tDistance.enable();
 
@@ -531,7 +534,7 @@ void accelCallback() {
   laccY = faccY.value(accY);
   laccZ = faccZ.value(accZ);
   upsideDown = false;
-  if (laccZ >= 0) upsideDown = true;
+  if (laccZ < 0) upsideDown = true;
 
   g2 = (laccX * laccX + laccY * laccY + laccZ * laccZ);
   if (g2 < G2_THRESHOLD_LOW || g2 > G2_THRESHOLD_HIGH) {
@@ -544,9 +547,9 @@ void accelCallback() {
     else shakeCounter--;
   }
 #ifdef _DEBUG_
-//  Serial.println("Accelerometer:");
+  //  Serial.println("Accelerometer:");
   //    Serial.print("accZ = "); Serial.println(accZ);
-//  Serial.print("g2 = "); Serial.println(g2);
+  //  Serial.print("g2 = "); Serial.println(g2);
   //    Serial.print("UpsideDown = "); Serial.println(upsideDown);
   Serial.print("movingShaking = "); Serial.println(movingShaking);
   //    Serial.print("shakeCounter = "); Serial.println(shakeCounter);
@@ -980,7 +983,7 @@ void setup () {
 
 #ifdef _DEBUG_
   Serial.begin(115200);
-//  Serial.println(CToken);
+  //  Serial.println(CToken);
 #endif
 
   moveStop();
@@ -1023,6 +1026,32 @@ void setup () {
 
   shakeSettleSeconds = 3;  // Wait for at least three seconds for the robot to be motionless
   accelgyro.initialize();
+
+  /*
+     Sensor readings with offsets: 0 -5  16379 0 0 6
+    Your offsets: -5624 1413  6137  0 0 -41
+
+    Data is printed as: acelX acelY acelZ giroX giroY giroZ
+    Check that your sensor readings are close to 0 0 16384 0 0 0
+    If calibration was succesful write down your offsets so you can set them in your projects using something similar to mpu.setXAccelOffset(youroffset)
+
+  */
+  while (!accelgyro.testConnection()) ;;
+
+  accelgyro.setFullScaleGyroRange(GYRO_MODE);
+  accelgyro.setDMPEnabled(false);
+  accelgyro.setStandbyYGyroEnabled(true);
+  accelgyro.setStandbyXGyroEnabled(true);
+  accelgyro.setTempSensorEnabled(false);
+
+  accelgyro.setXAccelOffset(-5624);
+  accelgyro.setYAccelOffset(1413);
+  accelgyro.setZAccelOffset(6137);
+
+  accelgyro.setXGyroOffset(0);
+  accelgyro.setYGyroOffset(0);
+  accelgyro.setZGyroOffset(-41);
+
   delay(2000);
 
   ledRedOff();
